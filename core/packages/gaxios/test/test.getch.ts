@@ -143,6 +143,34 @@ describe('🚙 error handling', () => {
     );
   });
 
+  it('should handle AIP-193 error bodies spread across multiple chunks: does not corrupt JSON with commas', async () => {
+    const part1 = '{"error": {"code":';
+    const part2 = ' 429, "message": "The zone \'us-east1-a\' does not have enough resources.", "status": "RESOURCE_EXHAUSTED", "details": []}}';
+    const readableStream = new Readable({
+      read() {},
+    });
+    readableStream.push(part1);
+    setTimeout(() => {
+      readableStream.push(part2);
+      readableStream.push(null);
+    }, 50);
+    const scope = nock(url).get('/').reply(429, readableStream);
+
+    await assert.rejects(
+      request<ArrayBuffer>({url, responseType: 'stream'}),
+      (err: GaxiosError) => {
+        scope.done();
+        const apiError = JSON.parse(err.message);
+        return (
+          apiError.error.code === 429 &&
+          apiError.error.message ===
+            "The zone 'us-east1-a' does not have enough resources." &&
+          apiError.error.status === 'RESOURCE_EXHAUSTED'
+        );
+      },
+    );
+  });
+
   it('should not throw an error during a translation error', () => {
     const notJSON = '.';
     const response = {
